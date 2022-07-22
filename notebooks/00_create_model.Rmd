@@ -1,0 +1,261 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load Required Libraries
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+set.seed(400)
+```
+
+# Read Data
+
+```{r}
+library(palmerpenguins)
+penguins_to_reg <- penguins %>%
+  filter(!is.na(body_mass_g))
+penguins_to_reg
+```
+
+
+# Split Data
+
+```{r}
+data_split <- initial_split(penguins_to_reg, prop = 0.80)
+data_train <- training(data_split)
+
+data_train
+```
+
+```{r}
+train_eval <- bootstraps(data_train, times=25)
+```
+
+# Explore Data
+
+```{r}
+# data_train %>%
+#   ggpairs()
+# 
+# ggsave(
+#   filename = "pairs.png",
+#   device = "png",
+#   path = "../plots",
+#   width = 28,
+#   height = 16,
+#   units = "in"
+# )
+```
+
+# Set Up Preprocessing (Recipe)
+
+```{r}
+numeric_only_rec <- recipe(body_mass_g ~ bill_length_mm + bill_depth_mm + 
+                           flipper_length_mm, 
+                           data = data_train) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+```{r}
+nominal_included_rec <- recipe(body_mass_g ~ bill_length_mm + bill_depth_mm + 
+                               flipper_length_mm + sex + species, 
+                               data = data_train) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+```
+
+# Set up Model
+
+```{r}
+knn_mdl <- nearest_neighbor() %>%
+  set_mode("regression")
+```
+
+```{r}
+lr_mdl <- linear_reg() %>%
+  set_mode("regression")
+```
+
+```{r}
+rf_mdl <- rand_forest() %>%
+  set_mode("regression")
+```
+
+# Set up Workflows
+
+```{r}
+knn_numeric_only_wf <- workflow() %>%
+  add_recipe(numeric_only_rec) %>%
+  add_model(knn_mdl)
+```
+
+```{r}
+knn_include_nominal_wf <- workflow() %>%
+  add_recipe(nominal_included_rec) %>%
+  add_model(knn_mdl)
+```
+
+```{r}
+lr_numeric_only_wf <- workflow() %>%
+  add_recipe(numeric_only_rec) %>%
+  add_model(lr_mdl)
+```
+
+```{r}
+lr_nominal_included_wf <- workflow() %>%
+  add_recipe(nominal_included_rec) %>%
+  add_model(lr_mdl)
+```
+
+```{r}
+rf_numeric_only_wf <- workflow() %>%
+  add_recipe(numeric_only_rec) %>%
+  add_model(rf_mdl)
+```
+
+```{r}
+rf_nominal_included_wf <- workflow() %>%
+  add_recipe(nominal_included_rec) %>%
+  add_model(rf_mdl)
+```
+
+# Define Metrics
+
+```{r}
+eval_metrics <- metric_set(rmse, rsq, mae)
+```
+
+# Train and Evaluate Workflow
+
+```{r}
+knn_numeric_only_fit <- knn_numeric_only_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(knn_numeric_only_fit)
+```
+
+```{r}
+knn_include_nominal_fit <- knn_include_nominal_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(knn_include_nominal_fit)
+```
+
+```{r}
+lr_numeric_only_fit <- lr_numeric_only_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(lr_numeric_only_fit)
+```
+
+```{r}
+lr_nominal_included_fit <- lr_nominal_included_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(lr_nominal_included_fit)
+```
+
+```{r}
+rf_numeric_only_fit <- rf_numeric_only_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(rf_numeric_only_fit)
+```
+
+```{r}
+rf_nominal_included_fit <- rf_nominal_included_wf %>%
+  fit_resamples(train_eval, 
+                control = control_resamples(save_pred = TRUE),
+                metrics = eval_metrics)
+
+collect_metrics(rf_nominal_included_fit)
+```
+
+# Hyperparameter Tuning
+
+```{r}
+tune_rf_mdl <- rand_forest(mtry = tune(),
+                           min_n = tune()) %>%
+  set_mode("regression")
+```
+
+```{r}
+tune_rf_wf <- workflow() %>%
+  add_recipe(nominal_included_rec) %>%
+  add_model(tune_rf_mdl)
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(10, 30)),
+  min_n(range = c(2, 8)),
+  levels = 5
+)
+
+rf_grid
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+rf_tuning_res <- tune_rf_wf %>%
+  tune_grid(
+    grid = rf_grid,
+    resamples = train_eval,
+    metrics = eval_metrics
+  )
+
+rf_tuning_res %>% collect_metrics()
+```
+
+```{r}
+final_mdl <- tune_rf_mdl %>%
+  finalize_model(
+    rf_tuning_res %>% select_best("rmse")
+  )
+
+final_mdl
+```
+
+# Final Results
+
+```{r}
+final_wf <- lr_nominal_included_wf
+```
+
+```{r}
+final_results <- final_wf %>%
+  last_fit(split = data_split, metrics = eval_metrics)
+```
+
+```{r}
+final_results$.metrics
+```
+
+# Save Results
+
+```{r}
+data_split %>% saveRDS(file = "../data/data_split.RData")
+train_eval %>% saveRDS(file = "../data/train_eval.RData")
+```
+
+```{r}
+final_results %>% saveRDS(file = "../models/final_results.RData")
+```

@@ -1,0 +1,112 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(DALEXtra)
+set.seed(400)
+```
+
+# Read Data
+
+```{r}
+data_split <- readRDS(file = "../data/data_split.RData")
+```
+
+```{r}
+final_results <- readRDS(file = "../models/final_results.RData")
+finalize_workflow_fitted <- final_results$.workflow[[1]]
+```
+
+### Extract Training Data
+
+```{r}
+data_train <- training(data_split)
+
+features_train <- data_train %>% 
+  select(bill_length_mm, 
+         bill_depth_mm, 
+         flipper_length_mm, 
+         sex, 
+         species)
+
+labels_train <- data_train %>% select(body_mass_g)
+
+data_train
+```
+
+### Extract Test Data
+
+```{r}
+data_test <- testing(data_split)
+predictions_test <- finalize_workflow_fitted %>% predict(data_test)
+
+data_test <- data_test %>%
+  cbind(predictions_test)
+
+data_test
+```
+
+# Check for Bias
+
+```{r}
+eval_metrics <- metric_set(rmse, rsq, mae)
+```
+
+```{r}
+data_test %>%
+  group_by(sex) %>%
+  eval_metrics(truth = body_mass_g, estimate = .pred)
+```
+
+# Create Explainer
+
+```{r}
+explainer_final <- finalize_workflow_fitted %>% 
+  explain_tidymodels(
+    data = features_train,
+    y = labels_train[[1]]
+  )
+
+explainer_final
+```
+
+### Local Explanations
+
+```{r}
+random_data_point <- data_test %>% sample_n(1)
+random_data_point
+```
+
+```{r}
+explainer_final %>%
+  predict_parts(
+    new_observation = random_data_point,
+    type = "shap"
+  ) %>%
+  plot()
+
+```
+
+### Global Explanations
+
+```{r}
+explainer_final %>%
+  model_parts(N = 1000) %>%
+  plot()
+
+```
+
+```{r}
+explainer_final %>%
+  model_profile(
+    variables = "bill_length_mm",
+    variable_splits = list("bill_length_mm"=unique(data_train$flipper_length_mm)),
+    N = NULL,
+    groups = "sex"
+  ) %>%
+  plot()
+```
