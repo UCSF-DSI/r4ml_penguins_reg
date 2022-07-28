@@ -42,7 +42,15 @@ data_train
 
 ```{r}
 data_test <- testing(data_split)
-predictions_test <- finalize_workflow_fitted %>% predict(data_test)
+predictions_test <- finalize_workflow_fitted %>% 
+  predict(
+    data_test %>%
+      select(bill_length_mm, 
+             bill_depth_mm, 
+             flipper_length_mm, 
+             sex, 
+             species)
+  )
 
 data_test <- data_test %>%
   cbind(predictions_test)
@@ -103,8 +111,8 @@ explainer_final %>%
 ```{r}
 explainer_final %>%
   model_profile(
-    variables = "bill_length_mm",
-    variable_splits = list("bill_length_mm"=unique(data_train$flipper_length_mm)),
+    variables = "flipper_length_mm",
+    variable_splits = list("flipper_length_mm"=unique(data_train$flipper_length_mm)),
     N = NULL,
     groups = "sex"
   ) %>%
